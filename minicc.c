@@ -911,6 +911,335 @@ static Symbol *add_symbol(Compiler *c, const char *name, int is_global, int is_p
     return sym;
 }
 
+// JSON AST output helpers
+static const char *ast_type_name(ASTType type) {
+    switch (type) {
+        case AST_NUM: return "NumLiteral";
+        case AST_STR: return "StringLiteral";
+        case AST_VAR: return "Variable";
+        case AST_BINOP: return "BinaryOp";
+        case AST_UNOP: return "UnaryOp";
+        case AST_ASSIGN: return "Assignment";
+        case AST_CALL: return "FunctionCall";
+        case AST_IF: return "IfStatement";
+        case AST_WHILE: return "WhileLoop";
+        case AST_FOR: return "ForLoop";
+        case AST_RETURN: return "ReturnStatement";
+        case AST_BLOCK: return "Block";
+        case AST_FUNC: return "FunctionDecl";
+        case AST_VARDECL: return "VarDecl";
+        case AST_PROGRAM: return "Program";
+        case AST_ARRAY_ACCESS: return "ArrayAccess";
+        case AST_ADDR: return "AddressOf";
+        default: return "Unknown";
+    }
+}
+
+static const char *op_to_string(int op) {
+    switch (op) {
+        case TOK_PLUS: return "+";
+        case TOK_MINUS: return "-";
+        case TOK_STAR: return "*";
+        case TOK_SLASH: return "/";
+        case TOK_PERCENT: return "%";
+        case TOK_EQ: return "==";
+        case TOK_NE: return "!=";
+        case TOK_LT: return "<";
+        case TOK_GT: return ">";
+        case TOK_LE: return "<=";
+        case TOK_GE: return ">=";
+        case TOK_AND: return "&&";
+        case TOK_OR: return "||";
+        case TOK_NOT: return "!";
+        default: return "?";
+    }
+}
+
+static void print_indent(FILE *out, int indent) {
+    for (int i = 0; i < indent; i++) {
+        fprintf(out, "  ");
+    }
+}
+
+static void print_json_string(FILE *out, const char *str) {
+    fprintf(out, "\"");
+    for (const char *p = str; *p; p++) {
+        switch (*p) {
+            case '"': fprintf(out, "\\\""); break;
+            case '\\': fprintf(out, "\\\\"); break;
+            case '\n': fprintf(out, "\\n"); break;
+            case '\r': fprintf(out, "\\r"); break;
+            case '\t': fprintf(out, "\\t"); break;
+            default: fprintf(out, "%c", *p); break;
+        }
+    }
+    fprintf(out, "\"");
+}
+
+static void ast_to_json(FILE *out, AST *node, int indent) {
+    if (!node) {
+        fprintf(out, "null");
+        return;
+    }
+
+    fprintf(out, "{\n");
+    print_indent(out, indent + 1);
+    fprintf(out, "\"type\": \"%s\"", ast_type_name(node->type));
+
+    switch (node->type) {
+        case AST_NUM:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"value\": %d", node->num);
+            break;
+
+        case AST_STR:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"value\": ");
+            print_json_string(out, node->str);
+            break;
+
+        case AST_VAR:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"name\": \"%s\"", node->str);
+            break;
+
+        case AST_BINOP:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"operator\": \"%s\",\n", op_to_string(node->binop.op));
+            print_indent(out, indent + 1);
+            fprintf(out, "\"left\": ");
+            ast_to_json(out, node->binop.left, indent + 1);
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"right\": ");
+            ast_to_json(out, node->binop.right, indent + 1);
+            break;
+
+        case AST_UNOP:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"operator\": \"%s\",\n", op_to_string(node->unop.op));
+            print_indent(out, indent + 1);
+            fprintf(out, "\"operand\": ");
+            ast_to_json(out, node->unop.operand, indent + 1);
+            break;
+
+        case AST_ASSIGN: {
+            const char *assign_op = "=";
+            if (node->assign.op == '+') assign_op = "+=";
+            else if (node->assign.op == '-') assign_op = "-=";
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"operator\": \"%s\",\n", assign_op);
+            print_indent(out, indent + 1);
+            fprintf(out, "\"left\": ");
+            ast_to_json(out, node->assign.left, indent + 1);
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"right\": ");
+            ast_to_json(out, node->assign.right, indent + 1);
+            break;
+        }
+
+        case AST_CALL:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"name\": \"%s\",\n", node->call.name);
+            print_indent(out, indent + 1);
+            fprintf(out, "\"arguments\": [");
+            if (node->call.nargs > 0) {
+                fprintf(out, "\n");
+                for (int i = 0; i < node->call.nargs; i++) {
+                    print_indent(out, indent + 2);
+                    ast_to_json(out, node->call.args[i], indent + 2);
+                    if (i < node->call.nargs - 1) fprintf(out, ",");
+                    fprintf(out, "\n");
+                }
+                print_indent(out, indent + 1);
+            }
+            fprintf(out, "]");
+            break;
+
+        case AST_IF:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"condition\": ");
+            ast_to_json(out, node->if_stmt.cond, indent + 1);
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"then\": ");
+            ast_to_json(out, node->if_stmt.then_branch, indent + 1);
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"else\": ");
+            ast_to_json(out, node->if_stmt.else_branch, indent + 1);
+            break;
+
+        case AST_WHILE:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"condition\": ");
+            ast_to_json(out, node->while_stmt.cond, indent + 1);
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"body\": ");
+            ast_to_json(out, node->while_stmt.body, indent + 1);
+            break;
+
+        case AST_FOR:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"init\": ");
+            ast_to_json(out, node->for_stmt.init, indent + 1);
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"condition\": ");
+            ast_to_json(out, node->for_stmt.cond, indent + 1);
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"update\": ");
+            ast_to_json(out, node->for_stmt.update, indent + 1);
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"body\": ");
+            ast_to_json(out, node->for_stmt.body, indent + 1);
+            break;
+
+        case AST_RETURN:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"value\": ");
+            ast_to_json(out, node->ret.value, indent + 1);
+            break;
+
+        case AST_BLOCK:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"statements\": [");
+            if (node->block.nstmts > 0) {
+                fprintf(out, "\n");
+                for (int i = 0; i < node->block.nstmts; i++) {
+                    print_indent(out, indent + 2);
+                    ast_to_json(out, node->block.stmts[i], indent + 2);
+                    if (i < node->block.nstmts - 1) fprintf(out, ",");
+                    fprintf(out, "\n");
+                }
+                print_indent(out, indent + 1);
+            }
+            fprintf(out, "]");
+            break;
+
+        case AST_FUNC:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"name\": \"%s\",\n", node->func.name);
+            print_indent(out, indent + 1);
+            fprintf(out, "\"returnType\": \"%s\",\n", node->func.is_void ? "void" : "int");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"parameters\": [");
+            if (node->func.nparams > 0) {
+                fprintf(out, "\n");
+                for (int i = 0; i < node->func.nparams; i++) {
+                    print_indent(out, indent + 2);
+                    fprintf(out, "\"%s\"", node->func.params[i]);
+                    if (i < node->func.nparams - 1) fprintf(out, ",");
+                    fprintf(out, "\n");
+                }
+                print_indent(out, indent + 1);
+            }
+            fprintf(out, "],\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"body\": ");
+            ast_to_json(out, node->func.body, indent + 1);
+            break;
+
+        case AST_VARDECL:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"name\": \"%s\",\n", node->vardecl.name);
+            print_indent(out, indent + 1);
+            fprintf(out, "\"isArray\": %s", node->vardecl.is_array ? "true" : "false");
+            if (node->vardecl.is_array) {
+                fprintf(out, ",\n");
+                print_indent(out, indent + 1);
+                fprintf(out, "\"arraySize\": %d", node->vardecl.array_size);
+            }
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"initializer\": ");
+            ast_to_json(out, node->vardecl.init, indent + 1);
+            break;
+
+        case AST_PROGRAM:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"globals\": [");
+            if (node->program.nglobals > 0) {
+                fprintf(out, "\n");
+                for (int i = 0; i < node->program.nglobals; i++) {
+                    print_indent(out, indent + 2);
+                    ast_to_json(out, node->program.globals[i], indent + 2);
+                    if (i < node->program.nglobals - 1) fprintf(out, ",");
+                    fprintf(out, "\n");
+                }
+                print_indent(out, indent + 1);
+            }
+            fprintf(out, "],\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"functions\": [");
+            if (node->program.nfuncs > 0) {
+                fprintf(out, "\n");
+                for (int i = 0; i < node->program.nfuncs; i++) {
+                    print_indent(out, indent + 2);
+                    ast_to_json(out, node->program.funcs[i], indent + 2);
+                    if (i < node->program.nfuncs - 1) fprintf(out, ",");
+                    fprintf(out, "\n");
+                }
+                print_indent(out, indent + 1);
+            }
+            fprintf(out, "]");
+            break;
+
+        case AST_ARRAY_ACCESS:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"name\": \"%s\",\n", node->array_access.name);
+            print_indent(out, indent + 1);
+            fprintf(out, "\"index\": ");
+            ast_to_json(out, node->array_access.index, indent + 1);
+            break;
+
+        case AST_ADDR:
+            fprintf(out, ",\n");
+            print_indent(out, indent + 1);
+            fprintf(out, "\"name\": \"%s\"", node->addr.name);
+            break;
+    }
+
+    fprintf(out, "\n");
+    print_indent(out, indent);
+    fprintf(out, "}");
+}
+
+// Parse only (for --dump-ast)
+static AST *parse_only(Compiler *c, const char *src) {
+    c->src = (char *)src;
+    c->pos = 0;
+    c->line = 1;
+    c->col = 1;
+    c->nsymbols = 0;
+    c->label_count = 0;
+    c->nstrings = 0;
+    c->stack_offset = 0;
+
+    next_token(c);
+    return do_parse_program(c);
+}
+
 // Code generation - ARM64
 static void emit(Compiler *c, const char *fmt, ...) {
     va_list args;
@@ -1794,21 +2123,25 @@ static char *read_file(const char *path) {
 
 int main(int argc, char **argv) {
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s <input.c> [-o output] [-S]\n", argv[0]);
-        fprintf(stderr, "  -o output  Specify output file name\n");
-        fprintf(stderr, "  -S         Output assembly only (no linking)\n");
+        fprintf(stderr, "Usage: %s <input.c> [-o output] [-S] [--dump-ast]\n", argv[0]);
+        fprintf(stderr, "  -o output   Specify output file name\n");
+        fprintf(stderr, "  -S          Output assembly only (no linking)\n");
+        fprintf(stderr, "  --dump-ast  Output AST as JSON (no compilation)\n");
         return 1;
     }
-    
+
     char *input_file = NULL;
     char *output_file = NULL;
     int asm_only = 0;
-    
+    int dump_ast = 0;
+
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "-o") == 0 && i + 1 < argc) {
             output_file = argv[++i];
         } else if (strcmp(argv[i], "-S") == 0) {
             asm_only = 1;
+        } else if (strcmp(argv[i], "--dump-ast") == 0) {
+            dump_ast = 1;
         } else {
             input_file = argv[i];
         }
@@ -1840,17 +2173,41 @@ int main(int argc, char **argv) {
     }
     
     char *src = read_file(input_file);
-    
+
+    // Handle --dump-ast option
+    if (dump_ast) {
+        Compiler compiler = {0};
+        AST *program = parse_only(&compiler, src);
+
+        FILE *out = stdout;
+        if (output_file) {
+            out = fopen(output_file, "w");
+            if (!out) {
+                fprintf(stderr, "Cannot open output file: %s\n", output_file);
+                return 1;
+            }
+        }
+
+        ast_to_json(out, program, 0);
+        fprintf(out, "\n");
+
+        if (output_file) {
+            fclose(out);
+            printf("Generated AST JSON: %s\n", output_file);
+        }
+        return 0;
+    }
+
     FILE *out = fopen(asm_file, "w");
     if (!out) {
         fprintf(stderr, "Cannot open output file: %s\n", asm_file);
         return 1;
     }
-    
+
     Compiler compiler = {0};
     compile(&compiler, src, out);
     fclose(out);
-    
+
     printf("Generated assembly: %s\n", asm_file);
     
     if (!asm_only) {
