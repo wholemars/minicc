@@ -1,0 +1,17 @@
+# Compiled binaries
+minicc
+hello
+fib
+factorial
+primes
+test_all
+
+# Generated assembly (keep hello.s as example)
+*.s
+!hello.s
+
+# Object files
+*.o
+
+# Temporary files
+*.tmp
